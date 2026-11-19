@@ -1,1 +1,110 @@
+name: VOLUMIS MOBILE G1 0.2 APK
 
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: volumis-neural-build
+  cancel-in-progress: true
+
+jobs:
+
+  build:
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 45
+
+    steps:
+
+      - name: Download VOLUMIS source
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools
+        run: |
+          sdkmanager \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;28.2.13676358" \
+            "cmake;3.22.1"
+
+      - name: Setup Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Verify VOLUMIS source files
+        run: |
+          test -f app/src/main/cpp/native-lib.cpp
+          test -f app/src/main/cpp/CMakeLists.txt
+
+          JAVA_DIR=app/src/main/java/ai/volumis/mobile
+
+          test -f "$JAVA_DIR/HardwareMonitor.java"
+          test -f "$JAVA_DIR/MemoryCore.java"
+          test -f "$JAVA_DIR/LocalNeuralEngine.java"
+          test -f "$JAVA_DIR/ModelManager.java"
+          test -f "$JAVA_DIR/HybridController.java"
+          test -f "$JAVA_DIR/MainActivity.java"
+
+          echo "VOLUMIS source verification: PASS"
+
+      - name: Verify llama.cpp release
+        run: |
+          git ls-remote --exit-code --tags \
+            https://github.com/ggml-org/llama.cpp.git \
+            refs/tags/b6500
+
+      - name: Compile VOLUMIS Neural APK
+        run: |
+          gradle --no-daemon \
+            --stacktrace \
+            assembleDebug
+
+      - name: Verify APK and native library
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+
+          test -f "$APK"
+
+          unzip -l "$APK"
+
+          unzip -l "$APK" | grep \
+            "lib/arm64-v8a/libvolumis_native.so"
+
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" \
+            verify --verbose "$APK"
+
+          echo "VOLUMIS native library: PASS"
+
+      - name: Prepare VOLUMIS artifact
+        run: |
+          mkdir -p output
+
+          cp app/build/outputs/apk/debug/app-debug.apk \
+            output/VOLUMIS-MOBILE-G1-0.2-X5C.apk
+
+          cd output
+
+          sha256sum VOLUMIS-MOBILE-G1-0.2-X5C.apk \
+            > SHA256.txt
+
+      - name: Upload VOLUMIS APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VOLUMIS-MOBILE-G1-0.2-X5C
+          path: output/
+          if-no-files-found: error
+          retention-days: 14
